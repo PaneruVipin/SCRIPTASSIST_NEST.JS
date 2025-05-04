@@ -1,99 +1,109 @@
-import { Injectable } from '@nestjs/common';
-
-// Inefficient in-memory cache implementation with multiple problems:
-// 1. No distributed cache support (fails in multi-instance deployments)
-// 2. No memory limits or LRU eviction policy
-// 3. No automatic key expiration cleanup (memory leak)
-// 4. No serialization/deserialization handling for complex objects
-// 5. No namespacing to prevent key collisions
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import type { Cache } from 'cache-manager';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { isString } from 'class-validator';
 
 @Injectable()
 export class CacheService {
-  // Using a simple object as cache storage
-  // Problem: Unbounded memory growth with no eviction
-  private cache: Record<string, { value: any; expiresAt: number }> = {};
+  private readonly logger = new Logger(CacheService.name);
+  private readonly namespace = 'app'; // Namespace for key isolation
 
-  // Inefficient set operation with no validation
-  async set(key: string, value: any, ttlSeconds = 300): Promise<void> {
-    // Problem: No key validation or sanitization
-    // Problem: Directly stores references without cloning (potential memory issues)
-    // Problem: No error handling for invalid values
-    
-    const expiresAt = Date.now() + ttlSeconds * 1000;
-    
-    // Problem: No namespacing for keys
-    this.cache[key] = {
-      value,
-      expiresAt,
-    };
-    
-    // Problem: No logging or monitoring of cache usage
+  constructor(@Inject(CACHE_MANAGER) private readonly cacheManager: Cache) {
   }
 
-  // Inefficient get operation that doesn't handle errors properly
-  async get<T>(key: string): Promise<T | null> {
-    // Problem: No key validation
-    const item = this.cache[key];
-    
-    if (!item) {
-      return null;
-    }
-    
-    // Problem: Checking expiration on every get (performance issue)
-    // Rather than having a background job to clean up expired items
-    if (item.expiresAt < Date.now()) {
-      // Problem: Inefficient immediate deletion during read operations
-      delete this.cache[key];
-      return null;
-    }
-    
-    // Problem: Returns direct object reference rather than cloning
-    // This can lead to unintended cache modifications when the returned
-    // object is modified by the caller
-    return item.value as T;
+  private getNamespacedKey(key: string): string {
+    return `${this.namespace}:${key}`;
   }
 
-  // Inefficient delete operation
+  private isValidKey(key: any): key is string {
+    return isString(key) && key.trim().length > 0;
+  }
+
+  async set<T = any>(key: string, value: T, ttlSeconds = 300): Promise<void> {
+    if (!this.isValidKey(key)) {
+      this.logger.warn(`Invalid cache key provided: "${key}"`);
+      return;
+    }
+
+    const namespacedKey = this.getNamespacedKey(key);
+    try {
+      const serializedValue = JSON.stringify(value);
+      await this.cacheManager.set(namespacedKey, serializedValue, ttlSeconds);
+      this.logger.debug(`Cache set: ${namespacedKey}`);
+    } catch (error:any) {
+      this.logger.error(`Failed to set cache key: ${namespacedKey}`, error.stack);
+    }
+  }
+
+  async get<T = any>(key: string): Promise<T | null> {
+    if (!this.isValidKey(key)) return null;
+
+    const namespacedKey = this.getNamespacedKey(key);
+    try {
+      const value = await this.cacheManager.get<string>(namespacedKey);
+      if (value === undefined || value === null) {
+        this.logger.debug(`Cache miss: ${namespacedKey}`);
+        return null;
+      }
+
+      return JSON.parse(value) as T;
+    } catch (error:any) {
+      this.logger.error(`Failed to get cache key: ${namespacedKey}`, error.stack);
+      return null;
+    }
+  }
+
   async delete(key: string): Promise<boolean> {
-    // Problem: No validation or error handling
-    const exists = key in this.cache;
-    
-    // Problem: No logging of cache misses for monitoring
-    if (exists) {
-      delete this.cache[key];
+    if (!this.isValidKey(key)) return false;
+
+    const namespacedKey = this.getNamespacedKey(key);
+    try {
+      await this.cacheManager.del(namespacedKey);
+      this.logger.debug(`Cache deleted: ${namespacedKey}`);
       return true;
+    } catch (error:any) {
+      this.logger.error(`Failed to delete cache key: ${namespacedKey}`, error.stack);
+      return false;
     }
-    
-    return false;
   }
 
-  // Inefficient cache clearing
   async clear(): Promise<void> {
-    // Problem: Blocking operation that can cause performance issues
-    // on large caches
-    this.cache = {};
-    
-    // Problem: No notification or events when cache is cleared
+    try {
+      await this.cacheManager.clear();
+      this.logger.warn(`Entire cache cleared`);
+    } catch (error:any) {
+      this.logger.error(`Failed to clear cache`, error.stack);
+    }
   }
 
-  // Inefficient method to check if a key exists
-  // Problem: Duplicates logic from the get method
   async has(key: string): Promise<boolean> {
-    const item = this.cache[key];
-    
-    if (!item) {
+    if (!this.isValidKey(key)) return false;
+
+    const namespacedKey = this.getNamespacedKey(key);
+    try {
+      const value = await this.cacheManager.get(namespacedKey);
+      return value !== undefined && value !== null;
+    } catch (error:any) {
+      this.logger.error(`Failed to check existence for key: ${namespacedKey}`, error.stack);
       return false;
     }
-    
-    // Problem: Repeating expiration logic instead of having a shared helper
-    if (item.expiresAt < Date.now()) {
-      delete this.cache[key];
-      return false;
-    }
-    
-    return true;
   }
-  
-  // Problem: Missing methods for bulk operations and cache statistics
-  // Problem: No monitoring or instrumentation
-} 
+
+  //  Get multiple keys at once (bulk operation)
+  async getMany<T = any>(keys: string[]): Promise<(T | null)[]> {
+    return Promise.all(keys.map(key => this.get<T>(key)));
+  }
+
+  // Set multiple keys at once
+  async setMany(entries: { key: string; value: any; ttl?: number }[]): Promise<void> {
+    await Promise.all(entries.map(entry =>
+      this.set(entry.key, entry.value, entry.ttl ?? 300),
+    ));
+  }
+
+  // Delete multiple keys at once
+  async deleteMany(keys: string[]): Promise<void> {
+    await Promise.all(keys.map(key => this.delete(key)));
+  }
+ 
+}

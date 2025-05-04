@@ -4,7 +4,7 @@ import { CreateInitialSchema1710752400000 } from './migrations/1710752400000-Cre
 
 // Load environment variables
 dotenv.config();
-
+console.log("process.env",process.env)
 export const dataSourceOptions: DataSourceOptions = {
   type: 'postgres',
   host: process.env.DB_HOST || 'localhost',

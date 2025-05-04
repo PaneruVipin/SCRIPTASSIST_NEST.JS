@@ -8,4 +8,6 @@ process.env.DB_HOST = 'localhost';
 process.env.DB_PORT = '5432';
 process.env.DB_USERNAME = 'postgres';
 process.env.DB_PASSWORD = 'postgres';
-process.env.DB_DATABASE = 'taskflow_test'; 
+process.env.DB_DATABASE = 'taskflow_test';
+
+// also redis connection can be changed here if required

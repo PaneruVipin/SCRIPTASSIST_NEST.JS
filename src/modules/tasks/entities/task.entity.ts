@@ -1,7 +1,9 @@
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
-import { User } from '../../users/entities/user.entity';
+import type { Relation } from 'typeorm';
+import  { User } from '../../users/entities/user.entity';
 import { TaskStatus } from '../enums/task-status.enum';
 import { TaskPriority } from '../enums/task-priority.enum';
+import { forwardRef } from '@nestjs/common';
 
 @Entity('tasks')
 export class Task {
@@ -34,9 +36,9 @@ export class Task {
   @Column({ name: 'user_id' })
   userId: string;
 
-  @ManyToOne(() => User, (user) => user.tasks)
+  @ManyToOne(()=> User , (user) => user.tasks)
   @JoinColumn({ name: 'user_id' })
-  user: User;
+  user:Relation<User>;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
