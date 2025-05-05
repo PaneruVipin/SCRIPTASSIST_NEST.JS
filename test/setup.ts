@@ -3,53 +3,73 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { LoggingInterceptor } from '@common/interceptors/logging.interceptor';
 import { HttpExceptionFilter } from '@common/filters/http-exception.filter';
-import "./jest-setup"
-import request from 'supertest';
+import { JwtService } from '@nestjs/jwt';
+import { DataSource } from 'typeorm';
+import { hash } from 'bcrypt';
+import './jest-setup';
+import { User } from '@modules/users/entities/user.entity';
 
 export let app: INestApplication;
 export let httpServer: any;
-export let authTokens: {admin:string,user:string};
+export let authTokens: { admin: string; user: string };
 
 export async function setupE2EApp() {
-  if (app) return { app, httpServer,authTokens }; // prevent re-init
+  // if (app) return { app, httpServer, authTokens }; // prevent re-init
+
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
   }).compile();
 
   app = moduleRef.createNestApplication();
 
-  //loging intercepter
+  // Add global filters, pipes, etc.
   app.useGlobalInterceptors(new LoggingInterceptor());
-
-  // expeception filter
   app.useGlobalFilters(new HttpExceptionFilter());
-
-
- // Global validation pipe
- app.useGlobalPipes(
-  new ValidationPipe({
-    whitelist: true,
-    transform: true,
-    forbidNonWhitelisted: true,
-    transformOptions: {
-      enableImplicitConversion: true,
-    },
-  }),
-);
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
 
   await app.init();
   httpServer = app.getHttpServer();
-  const adminCred = { email:"admin@example.com", password:"admin123" }
 
-  const userCred ={email:"user@example.com", password:"user123"}
+  const dataSource = app.get(DataSource);
+  const userRepo = dataSource.getRepository(User);
+  const jwtService = app.get(JwtService);
 
-  const loginRes = await Promise.all([adminCred,userCred].map((cred)=>request(httpServer).post('/auth/login').send(cred))) 
+  // Create users
+  const passwordHash = await hash('admin123', 10);
+  const adminUser = await userRepo.save(
+    userRepo.create({
+      email: `auth-admin${Date.now()}@example.com`,
+      password: passwordHash,
+      name:"Auth User",
+      role: "admin",
+    }),
+  );
 
-  authTokens = {admin:loginRes?.[0]?.body.access_token,user:loginRes?.[1]?.body.access_token}
-  return { app, httpServer ,authTokens};
+  const normalUser = await userRepo.save(
+    userRepo.create({
+      email: `auth-user${Date.now()}@example.com`,
+      password: passwordHash,
+      name:"Auth User",
+      role: "user",
+    }),
+  );
+
+  // Generate tokens manually
+  authTokens = {
+    admin: jwtService.sign({ sub: adminUser.id}),
+    user: jwtService.sign({ sub: normalUser.id}),
+  };
+
+  return { app, httpServer, authTokens };
 }
 
 export async function teardownE2EApp() {
   if (app) await app.close();
 }
-// teardownE2EApp()

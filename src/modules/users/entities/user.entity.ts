@@ -20,7 +20,7 @@ export class User {
   @Column({ default: 'user' })
   role: string;
 
-  @OneToMany(() => Task, (task) => task.user)
+  @OneToMany(() => Task, (task) => task.user, { onDelete: 'CASCADE' })
   tasks: Task[];
 
   @CreateDateColumn({ name: 'created_at' })
